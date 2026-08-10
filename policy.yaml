@@ -1,0 +1,30 @@
+agent: "refund-bot"
+policies:
+  # 1. Which tools may be called at all (fail-closed: anything not in allow is denied)
+  tools:
+    allow: ["get_order", "issue_refund", "send_email"]
+    deny: ["delete_database", "run_shell"] # explicit deny wins over allow
+
+  # 2. Argument constraints on specific tools
+  constraints:
+    - tool: "issue_refund"
+      arg: "amount"
+      max: 500 # also support: min, equals, one_of, regex
+      on_violation: require_approval # or: deny
+
+  # 3. Rate + spend limits (tracked per session)
+  limits:
+    rate:
+      max_calls_per_minute: 30
+    spend:
+      currency: "USD"
+      meter: { tool: "issue_refund", arg: "amount" }
+      max_per_session: 2000
+
+  # 4. Sequence rules (a finite state machine over tool calls)
+  sequence:
+    initial: "start"
+    transitions:
+      - { from: "start", tool: "get_order", to: "order_loaded" }
+      - { from: "order_loaded", tool: "issue_refund", to: "refunded" }
+      - { from: "refunded", tool: "send_email", to: "done" }

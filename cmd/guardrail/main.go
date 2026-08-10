@@ -39,7 +39,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `guardrail is the CLI/server for the AI agent guardrail & policy engine.
 
 Usage:
-  guardrail serve -policy <policy.yaml> [-addr :8080] [-audit-log <file>] [-approval-timeout 5m]
+  guardrail serve [-policy <policy.yaml>] [-addr :8080] [-audit-log <file>] [-approval-timeout 5m]
+      -policy defaults to examples/reckless-agent/policy.yaml
+      -addr defaults to the $PORT environment variable, or :8080
   guardrail validate <policy.yaml>
   guardrail tail-audit [-file <audit.log>]`)
 }

@@ -36,18 +36,32 @@ func buildServeHandler(policyPath string, auditWriter io.Writer, approvalTimeout
 	return server.NewHandler(g), nil
 }
 
+// defaultAddr is ":8080" unless the PORT environment variable is set (as
+// Render and other PaaS platforms do), in which case it's ":$PORT".
+func defaultAddr() string {
+	if p := os.Getenv("PORT"); p != "" {
+		return ":" + p
+	}
+	return ":8080"
+}
+
+// defaultPolicyPath is used when -policy is not given, so the binary has
+// something to load out of the box (e.g. in a container where only the
+// flag's default matters).
+const defaultPolicyPath = "examples/reckless-agent/policy.yaml"
+
 // runServe implements `guardrail serve`.
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	policyPath := fs.String("policy", "", "path to policy YAML (required)")
-	addr := fs.String("addr", ":8080", "address to listen on")
+	policyPath := fs.String("policy", defaultPolicyPath, "path to policy YAML")
+	addr := fs.String("addr", defaultAddr(), "address to listen on (default: $PORT env var, or :8080)")
 	auditPath := fs.String("audit-log", "", "path to append JSON-lines audit records (default: stdout)")
 	approvalTimeout := fs.Duration("approval-timeout", 5*time.Minute, "how long to wait for a human to approve/reject before defaulting to deny")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *policyPath == "" {
-		return fmt.Errorf("usage: guardrail serve -policy <policy.yaml> [-addr :8080] [-audit-log <file>] [-approval-timeout 5m]")
+		return fmt.Errorf("usage: guardrail serve [-policy <policy.yaml>] [-addr :8080] [-audit-log <file>] [-approval-timeout 5m]")
 	}
 
 	var w io.Writer = os.Stdout
