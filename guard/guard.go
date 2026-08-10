@@ -17,9 +17,10 @@ import (
 
 // Guard is the embeddable entry point: call Check before executing a tool.
 type Guard struct {
-	engine policy.Engine
-	audit  *audit.Logger
-	store  *approval.Store
+	engine  policy.Engine
+	audit   *audit.Logger
+	store   *approval.Store
+	history *history
 }
 
 // Option configures a Guard at construction time.
@@ -30,6 +31,8 @@ type options struct {
 	auditRedact     audit.Redactor
 	approvalStore   *approval.Store
 	approvalTimeout time.Duration
+	historyEnabled  bool
+	historySize     int
 }
 
 // WithAudit logs every decision as JSON-lines to w. redact, if non-nil, is
@@ -51,6 +54,19 @@ func WithApproval(store *approval.Store, timeout time.Duration) Option {
 	}
 }
 
+// WithHistory keeps the most recent n decisions in memory (n <= 0 defaults
+// to 100), queryable via Guard.RecentDecisions and Guard.Stats — e.g. to
+// drive a live dashboard. A decision that requires approval is recorded
+// twice: once the instant it's parked (so a dashboard can show it as
+// pending immediately, without waiting for a human), and again with its
+// final Allow/Deny outcome once resolved.
+func WithHistory(n int) Option {
+	return func(o *options) {
+		o.historyEnabled = true
+		o.historySize = n
+	}
+}
+
 // New builds a Guard from an already-loaded policy.
 func New(p config.Policy, opts ...Option) (*Guard, error) {
 	engine, err := policy.New(p)
@@ -65,12 +81,22 @@ func New(p config.Policy, opts ...Option) (*Guard, error) {
 
 	g := &Guard{engine: engine}
 
-	if o.approvalStore != nil {
-		g.store = o.approvalStore
-		g.engine = approval.NewGate(g.engine, g.store, o.approvalTimeout)
-	}
 	if o.auditWriter != nil {
 		g.audit = audit.New(o.auditWriter, o.auditRedact)
+	}
+	if o.historyEnabled {
+		g.history = newHistory(o.historySize)
+	}
+
+	if o.approvalStore != nil {
+		g.store = o.approvalStore
+		gate := approval.NewGate(g.engine, g.store, o.approvalTimeout)
+		if g.history != nil {
+			gate.OnPending(func(_ context.Context, call policy.ToolCall, d policy.Decision) {
+				g.history.record(call, d)
+			})
+		}
+		g.engine = gate
 	}
 
 	return g, nil
@@ -97,6 +123,9 @@ func (g *Guard) Check(ctx context.Context, call policy.ToolCall) (policy.Decisio
 	if g.audit != nil {
 		g.audit.LogDecision(ctx, call, decision)
 	}
+	if g.history != nil {
+		g.history.record(call, decision)
+	}
 	return decision, nil
 }
 
@@ -106,4 +135,28 @@ func (g *Guard) Check(ctx context.Context, call policy.ToolCall) (policy.Decisio
 // interception endpoint.
 func (g *Guard) ApprovalStore() *approval.Store {
 	return g.store
+}
+
+// RecentDecisions returns up to the size configured via WithHistory of the
+// most recent decisions, newest first. Returns nil if WithHistory was not
+// used.
+func (g *Guard) RecentDecisions() []Record {
+	if g.history == nil {
+		return nil
+	}
+	return g.history.recent()
+}
+
+// Stats returns Allow/Deny counts recorded via WithHistory (both 0 if it
+// was not used), plus the current number of calls awaiting human approval
+// (0 if approval is not configured).
+func (g *Guard) Stats() Stats {
+	var s Stats
+	if g.history != nil {
+		s.Allowed, s.Denied = g.history.counts()
+	}
+	if g.store != nil {
+		s.Pending = len(g.store.List())
+	}
+	return s
 }

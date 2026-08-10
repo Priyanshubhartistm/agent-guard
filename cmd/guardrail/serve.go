@@ -27,6 +27,7 @@ func buildServeHandler(policyPath string, auditWriter io.Writer, approvalTimeout
 	g, err := guard.New(*p,
 		guard.WithApproval(approval.NewStore(), approvalTimeout),
 		guard.WithAudit(auditWriter, nil),
+		guard.WithHistory(100),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("build engine: %w", err)
