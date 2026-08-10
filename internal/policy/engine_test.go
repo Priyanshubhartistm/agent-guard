@@ -17,7 +17,10 @@ func TestEngineCheck_Tools(t *testing.T) {
 			},
 		},
 	}
-	e := New(p)
+	e, err := New(p)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
 
 	tests := []struct {
 		name     string
@@ -61,7 +64,10 @@ func TestEngineCheck_DenyWinsOverAllow(t *testing.T) {
 			},
 		},
 	}
-	e := New(p)
+	e, err := New(p)
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
 
 	got, err := e.Check(context.Background(), ToolCall{Tool: "issue_refund"})
 	if err != nil {
@@ -76,7 +82,10 @@ func TestEngineCheck_DenyWinsOverAllow(t *testing.T) {
 }
 
 func TestEngineCheck_EmptyPolicyDeniesEverything(t *testing.T) {
-	e := New(config.Policy{})
+	e, err := New(config.Policy{})
+	if err != nil {
+		t.Fatalf("New() unexpected error: %v", err)
+	}
 
 	got, err := e.Check(context.Background(), ToolCall{Tool: "anything"})
 	if err != nil {
