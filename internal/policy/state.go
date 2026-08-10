@@ -23,6 +23,15 @@ type SessionState interface {
 	// that would result (whether or not it was applied) and whether amount
 	// was actually applied.
 	AddSpend(session, meter string, amount, max float64) (total float64, ok bool)
+
+	// AdvanceState atomically attempts a sequence transition for session.
+	// next is called with the session's current state (defaulting to
+	// initial the first time the session is seen) and must report the
+	// resulting state and whether the transition is valid. On success the
+	// new state is stored and returned; on failure the state is left
+	// unchanged and the (unchanged) current state is returned instead, for
+	// use in a Deny reason.
+	AdvanceState(session, initial string, next func(current string) (newState string, ok bool)) (state string, ok bool)
 }
 
 // memoryState is an in-memory, mutex-guarded SessionState.
@@ -30,6 +39,7 @@ type memoryState struct {
 	mu       sync.Mutex
 	limiters map[string]*rate.Limiter
 	spend    map[string]float64 // key: session + "\x00" + meter
+	seq      map[string]string  // session -> current sequence state
 }
 
 // NewMemoryState returns a SessionState backed by an in-memory map.
@@ -37,6 +47,7 @@ func NewMemoryState() SessionState {
 	return &memoryState{
 		limiters: make(map[string]*rate.Limiter),
 		spend:    make(map[string]float64),
+		seq:      make(map[string]string),
 	}
 }
 
@@ -65,4 +76,22 @@ func (s *memoryState) AddSpend(session, meter string, amount, max float64) (floa
 	}
 	s.spend[key] = total
 	return total, true
+}
+
+func (s *memoryState) AdvanceState(session, initial string, next func(current string) (string, bool)) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	current, seen := s.seq[session]
+	if !seen {
+		current = initial
+	}
+
+	newState, ok := next(current)
+	if !ok {
+		return current, false
+	}
+
+	s.seq[session] = newState
+	return newState, true
 }

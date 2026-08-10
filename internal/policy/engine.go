@@ -20,6 +20,8 @@ type engine struct {
 	spendMeterArg  string
 	spendMax       float64
 
+	sequence compiledSequence
+
 	state SessionState
 }
 
@@ -56,17 +58,22 @@ func New(p config.Policy) (Engine, error) {
 		e.spendMax = p.Policies.Limits.Spend.MaxPerSession
 	}
 
+	e.sequence = compileSequence(p.Policies.Sequence)
+
 	return e, nil
 }
 
 // Check evaluates a ToolCall against the tools allow/deny list, argument
-// constraints, and the rate/spend limits, in that order. The first rule
-// that produces a non-Allow verdict wins.
+// constraints, sequence (FSM) rules, and the rate/spend limits, in that
+// order. The first rule that produces a non-Allow verdict wins.
 func (e *engine) Check(ctx context.Context, call ToolCall) (Decision, error) {
 	if d, stop := e.checkTools(call); stop {
 		return d, nil
 	}
 	if d, stop := e.checkConstraints(call); stop {
+		return d, nil
+	}
+	if d, stop := e.checkSequence(call); stop {
 		return d, nil
 	}
 	if d, stop := e.checkRateLimit(call); stop {
@@ -122,6 +129,34 @@ func (e *engine) checkConstraints(call ToolCall) (Decision, bool) {
 		return Decision{Type: Deny, Reason: reason, Rule: rule}, true
 	}
 	return Decision{}, false
+}
+
+// checkSequence enforces the sequence (FSM) rules: call.Tool must be a
+// valid transition from the session's current state.
+func (e *engine) checkSequence(call ToolCall) (Decision, bool) {
+	if !e.sequence.enabled {
+		return Decision{}, false
+	}
+
+	state, ok := e.state.AdvanceState(call.SessionID, e.sequence.initial, func(current string) (string, bool) {
+		return e.sequence.next(current, call.Tool)
+	})
+	if ok {
+		return Decision{}, false
+	}
+
+	reason := fmt.Sprintf("tool %q is not valid from sequence state %q", call.Tool, state)
+	if allowed := e.sequence.allowedTools(state); len(allowed) > 0 {
+		reason += fmt.Sprintf(" (expected one of: %v)", allowed)
+	} else {
+		reason += " (no further tools are valid from this state)"
+	}
+
+	return Decision{
+		Type:   Deny,
+		Reason: reason,
+		Rule:   "sequence",
+	}, true
 }
 
 // checkRateLimit enforces the per-session max-calls-per-minute limit.
